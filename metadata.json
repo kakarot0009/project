@@ -1,0 +1,5 @@
+{
+  "name": "CodexBuilder AI",
+  "description": "An AI-powered website and code generator. Generate full project structures, edit code in-browser with live preview, and download your creation as a ZIP file.",
+  "requestFramePermissions": []
+}
