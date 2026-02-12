@@ -1,113 +1,79 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { FileData } from '../types';
-import { RefreshCw, Monitor, AlertTriangle } from 'lucide-react';
+import { ProjectFile } from '../types';
 
 interface PreviewProps {
-  files: FileData[];
-  refreshTrigger: number; // Increment to force refresh
+  files: ProjectFile[];
+  refreshTrigger: number;
 }
 
-export const Preview: React.FC<PreviewProps> = ({ files, refreshTrigger }) => {
+const Preview: React.FC<PreviewProps> = ({ files, refreshTrigger }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [srcDoc, setSrcDoc] = useState('');
 
   useEffect(() => {
-    if (!iframeRef.current || files.length === 0) return;
-
-    // Find entry point
-    const indexFile = files.find(f => f.name === 'index.html');
-    
-    if (!indexFile) {
-      setError("No 'index.html' found. Cannot preview.");
-      // Render a placeholder or error in iframe
-      const doc = iframeRef.current.contentDocument;
-      if (doc) {
-        doc.open();
-        doc.write(`
-          <body style="background:#121212;color:#888;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;">
-            <div style="text-align:center">
-              <h2>No Preview Available</h2>
-              <p>Generated project does not contain an index.html file.</p>
-            </div>
-          </body>
-        `);
-        doc.close();
+    const generatePreview = () => {
+      const indexFile = files.find(f => f.name.toLowerCase() === 'index.html');
+      if (!indexFile) {
+        setSrcDoc('<html><body style="color:white; background:#111; font-family:sans-serif; display:flex; justify-content:center; align-items:center; height:100vh;"><h1>No index.html found</h1></body></html>');
+        return;
       }
-      return;
-    }
 
-    setError(null);
+      let htmlContent = indexFile.content;
 
-    // Construct the full HTML document with injected CSS/JS
-    let htmlContent = indexFile.content;
+      // In-memory linking of CSS and JS
+      // We assume simple relative paths like <link href="style.css"> or <script src="app.js">
+      
+      // 1. Inline CSS
+      // Regex looks for <link rel="stylesheet" href="...">
+      htmlContent = htmlContent.replace(/<link[^>]+href=["']([^"']+)["'][^>]*>/g, (match, href) => {
+        if (href.startsWith('http')) return match; // Keep CDNs
+        const cssFile = files.find(f => f.name === href);
+        if (cssFile) {
+          return `<style data-filename="${href}">${cssFile.content}</style>`;
+        }
+        return match;
+      });
 
-    // Replace relative CSS links with inline styles
-    files.filter(f => f.name.endsWith('.css')).forEach(cssFile => {
-      // Regex to find <link rel="stylesheet" href="style.css"> or similar
-      const linkRegex = new RegExp(`<link[^>]+href=["']${cssFile.name}["'][^>]*>`, 'g');
-      if (linkRegex.test(htmlContent)) {
-          htmlContent = htmlContent.replace(linkRegex, `<style>${cssFile.content}</style>`);
-      } else {
-        // Fallback: Just append if not linked (optional, but safer for generated code sometimes)
-        // htmlContent = htmlContent.replace('</head>', `<style>${cssFile.content}</style></head>`);
-      }
-    });
+      // 2. Inline JS
+      // Regex looks for <script src="...">
+      htmlContent = htmlContent.replace(/<script[^>]+src=["']([^"']+)["'][^>]*><\/script>/g, (match, src) => {
+        if (src.startsWith('http')) return match; // Keep CDNs
+        const jsFile = files.find(f => f.name === src);
+        if (jsFile) {
+          return `<script data-filename="${src}">${jsFile.content}</script>`;
+        }
+        return match;
+      });
+      
+      // Inject a script to capture console logs if we wanted, but keeping it simple for now.
+      setSrcDoc(htmlContent);
+    };
 
-    // Replace relative JS scripts with inline scripts
-    files.filter(f => f.name.endsWith('.js')).forEach(jsFile => {
-      const scriptRegex = new RegExp(`<script[^>]+src=["']${jsFile.name}["'][^>]*><\/script>`, 'g');
-      if (scriptRegex.test(htmlContent)) {
-          htmlContent = htmlContent.replace(scriptRegex, `<script>${jsFile.content}</script>`);
-      }
-    });
-    
-    // Also handle nested paths if simple replacement failed, though Gemini usually keeps it flat or relative.
-    // For a robust builder, we might use Blob URLs for all assets, but inline is faster for text-only projects.
-    
-    const doc = iframeRef.current.contentDocument;
-    if (doc) {
-      doc.open();
-      doc.write(htmlContent);
-      doc.close();
-    }
-
+    generatePreview();
   }, [files, refreshTrigger]);
 
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full bg-white text-gray-800 p-6 text-center">
-         <AlertTriangle size={48} className="text-yellow-500 mb-4" />
-         <h3 className="text-xl font-bold mb-2">Preview Unavailable</h3>
-         <p className="text-gray-600">{error}</p>
-         <p className="text-sm text-gray-500 mt-4">Only web projects (HTML/CSS/JS) can be previewed here.</p>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col h-full bg-white">
-      <div className="flex items-center justify-between px-4 py-2 bg-gray-100 border-b border-gray-300">
-        <div className="flex items-center gap-2 text-sm font-semibold text-gray-700">
-          <Monitor size={16} />
-          <span>Live Preview</span>
-        </div>
-        <button 
-           className="p-1.5 rounded hover:bg-gray-200 text-gray-600"
-           title="Reload Preview"
-           onClick={() => {
-               // Force re-render logic via parent or direct DOM manip if needed
-               // For now, state update in parent triggers useEffect above
-           }}
-        >
-          <RefreshCw size={14} />
-        </button>
+    <div className="w-full h-full bg-white flex flex-col">
+      <div className="h-8 bg-gray-100 border-b border-gray-300 flex items-center px-4 space-x-2">
+         <div className="w-3 h-3 rounded-full bg-red-400"></div>
+         <div className="w-3 h-3 rounded-full bg-yellow-400"></div>
+         <div className="w-3 h-3 rounded-full bg-green-400"></div>
+         <span className="ml-2 text-xs text-gray-500 font-mono flex-1 text-center opacity-70">
+            http://localhost:3000/preview
+         </span>
+         <button className="text-gray-500 hover:text-gray-800">
+             <i className="fas fa-external-link-alt text-xs"></i>
+         </button>
       </div>
       <iframe
         ref={iframeRef}
-        title="Project Preview"
-        className="flex-1 w-full h-full border-none bg-white"
-        sandbox="allow-scripts allow-same-origin allow-modals allow-forms allow-popups"
+        srcDoc={srcDoc}
+        title="Live Preview"
+        className="flex-1 w-full h-full border-none"
+        sandbox="allow-scripts allow-modals allow-same-origin"
       />
     </div>
   );
 };
+
+export default Preview;
