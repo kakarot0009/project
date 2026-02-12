@@ -1,12 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>CodexBuilder AI</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nebula Builder</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet" />
     <style>
-      /* Custom scrollbar for a cleaner IDE look */
+      /* Custom scrollbar for IDE feel */
       ::-webkit-scrollbar {
         width: 8px;
         height: 8px;
@@ -15,32 +16,29 @@
         background: #1e1e1e;
       }
       ::-webkit-scrollbar-thumb {
-        background: #4a4a4a;
+        background: #4b5563;
         border-radius: 4px;
       }
       ::-webkit-scrollbar-thumb:hover {
-        background: #6a6a6a;
-      }
-      body {
-        background-color: #121212;
-        color: #e0e0e0;
+        background: #6b7280;
       }
     </style>
   <script type="importmap">
 {
   "imports": {
-    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-    "@google/genai": "https://esm.sh/@google/genai@^1.41.0",
     "react/": "https://esm.sh/react@^19.2.4/",
     "react": "https://esm.sh/react@^19.2.4",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.41.0",
     "jszip": "https://esm.sh/jszip@^3.10.1",
-    "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
     "file-saver": "https://esm.sh/file-saver@^2.0.5"
   }
 }
 </script>
+<link rel="stylesheet" href="/index.css">
 </head>
-  <body>
+  <body class="bg-gray-900 text-white h-screen overflow-hidden">
     <div id="root"></div>
-  </body>
+  <script type="module" src="/index.tsx"></script>
+</body>
 </html>

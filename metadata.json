@@ -1,5 +1,5 @@
 {
-  "name": "CodexBuilder AI",
-  "description": "An AI-powered website and code generator. Generate full project structures, edit code in-browser with live preview, and download your creation as a ZIP file.",
+  "name": "Nebula Builder",
+  "description": "A powerful AI-driven web IDE. Generate complete websites with HTML/CSS/JS/PHP/SQL, edit code with a rich editor, preview in real-time, and export to ZIP. Features prompt enhancement for better AI results.",
   "requestFramePermissions": []
 }

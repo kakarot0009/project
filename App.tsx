@@ -1,237 +1,180 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { FileData, ProjectState, ChatMessage } from './types';
-import { INITIAL_FILES } from './constants';
-import { generateProject, enhancePrompt } from './services/gemini';
-import { detectLanguage, downloadProjectAsZip } from './utils/fileUtils';
-import { FileExplorer } from './components/FileExplorer';
-import { CodeEditor } from './components/CodeEditor';
-import { Preview } from './components/Preview';
-import { ChatPanel } from './components/ChatPanel';
-import { Header } from './components/Header';
-import { Files, MessageSquare } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import JSZip from 'jszip';
+import saveAs from 'file-saver';
+import { ProjectFile, ViewMode } from './types';
+import { generateProjectStructure } from './services/geminiService';
+import FileExplorer from './components/FileExplorer';
+import CodeEditor from './components/CodeEditor';
+import Preview from './components/Preview';
+import PromptBar from './components/PromptBar';
 
 const App: React.FC = () => {
-  const [projectState, setProjectState] = useState<ProjectState>({
-    files: INITIAL_FILES,
-    activeFile: 'README.md',
-    isGenerating: false,
-    statusMessage: '',
-    projectName: 'untitled-project'
-  });
+  const [files, setFiles] = useState<ProjectFile[]>([]);
+  const [activeFile, setActiveFile] = useState<ProjectFile | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.SPLIT);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [refreshPreview, setRefreshPreview] = useState(0);
 
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [activeSidebarTab, setActiveSidebarTab] = useState<'files' | 'chat'>('chat');
-  const [viewMode, setViewMode] = useState<'editor' | 'preview' | 'split'>('split');
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
-
-  const handleSendMessage = async (text: string) => {
-    const newUserMsg: ChatMessage = {
-      id: Date.now().toString(),
-      role: 'user',
-      text,
-      timestamp: Date.now()
+  // Initial welcome message
+  useEffect(() => {
+    const welcomeFile: ProjectFile = {
+      name: 'README.md',
+      content: `# Welcome to Nebula Builder\n\n1. Type a prompt in the bottom bar (e.g., "A portfolio for a photographer").\n2. Use the 'Enhance' button to improve your prompt.\n3. Click 'Generate' to create your site.\n4. Edit code on the left, see changes on the right.\n5. Download your project as a ZIP.`,
+      language: 'markdown'
     };
-    
-    setMessages(prev => [...prev, newUserMsg]);
-    setProjectState(prev => ({ ...prev, isGenerating: true, statusMessage: 'Thinking...' }));
+    setFiles([welcomeFile]);
+    setActiveFile(welcomeFile);
+  }, []);
 
+  const handleGenerate = async (prompt: string) => {
+    setIsGenerating(true);
     try {
-      // Pass existing files as context
-      const response = await generateProject(text, projectState.files);
+      const generatedFiles = await generateProjectStructure(prompt);
+      setFiles(generatedFiles);
       
-      // Update Project Name if suggested and currently untitled
-      let newProjectName = projectState.projectName;
-      if (response.projectName && (projectState.projectName === 'untitled-project' || projectState.projectName === 'codex-project')) {
-        newProjectName = response.projectName;
-      }
-
-      // Merge or Replace files
-      let updatedFiles = [...projectState.files];
-      let activeFile = projectState.activeFile;
-
-      if (response.files && response.files.length > 0) {
-        // If it seems like a full project generation (contains index.html), strictly prefer the new files but keep others?
-        // Let's just upsert for now to support "edit style.css".
-        
-        // Check if it's a "fresh" project (e.g. has index.html and we have only readme)
-        const isFreshStart = projectState.files.length <= 1 && response.files.some(f => f.name === 'index.html');
-        
-        if (isFreshStart) {
-             updatedFiles = response.files.map(f => ({
-                name: f.name,
-                content: f.content,
-                language: detectLanguage(f.name)
-             }));
-        } else {
-             // Upsert logic
-             response.files.forEach(newFile => {
-                const existingIndex = updatedFiles.findIndex(f => f.name === newFile.name);
-                if (existingIndex >= 0) {
-                    updatedFiles[existingIndex] = {
-                        ...updatedFiles[existingIndex],
-                        content: newFile.content,
-                        language: detectLanguage(newFile.name)
-                    };
-                } else {
-                    updatedFiles.push({
-                        name: newFile.name,
-                        content: newFile.content,
-                        language: detectLanguage(newFile.name)
-                    });
-                }
-             });
-        }
-        
-        // If we touched the active file, it updates automatically via state.
-        // If we added a new index.html and didn't have one, switch to it.
-        if (response.files.some(f => f.name === 'index.html')) {
-            activeFile = 'index.html';
-        } else if (response.files.length > 0 && !activeFile) {
-            activeFile = response.files[0].name;
-        }
-      }
-
-      const newAiMsg: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        role: 'ai',
-        text: response.explanation || "Project updated successfully.",
-        timestamp: Date.now()
-      };
-
-      setMessages(prev => [...prev, newAiMsg]);
-      setProjectState({
-        files: updatedFiles,
-        activeFile,
-        isGenerating: false,
-        statusMessage: '',
-        projectName: newProjectName
-      });
-      setRefreshTrigger(prev => prev + 1);
-
+      const index = generatedFiles.find(f => f.name === 'index.html');
+      setActiveFile(index || generatedFiles[0]);
+      setRefreshPreview(prev => prev + 1);
     } catch (error) {
-      console.error(error);
-      setMessages(prev => [...prev, {
-        id: Date.now().toString(),
-        role: 'ai',
-        text: "I encountered an error while processing your request. Please try again.",
-        timestamp: Date.now()
-      }]);
-      setProjectState(prev => ({ 
-          ...prev, 
-          isGenerating: false, 
-          statusMessage: 'Error'
-      }));
+      alert("Failed to generate project. Please check your API key and try again.");
+    } finally {
+      setIsGenerating(false);
     }
   };
 
-  const handleFileChange = useCallback((newContent: string) => {
-    setProjectState(prev => {
-        const updatedFiles = prev.files.map(f => 
-            f.name === prev.activeFile ? { ...f, content: newContent } : f
-        );
-        return { ...prev, files: updatedFiles };
+  const handleUpdateContent = (newContent: string) => {
+    if (!activeFile) return;
+    
+    const updatedFiles = files.map(f => 
+      f.name === activeFile.name ? { ...f, content: newContent } : f
+    );
+    setFiles(updatedFiles);
+    setActiveFile({ ...activeFile, content: newContent });
+    
+    // Debounce preview update slightly or just update immediately
+    // For smoothness, immediate is fine for small projects
+    if (activeFile.name.endsWith('.html') || activeFile.name.endsWith('.css') || activeFile.name.endsWith('.js')) {
+        setRefreshPreview(Date.now());
+    }
+  };
+
+  const handleDeleteFile = (fileName: string) => {
+    const newFiles = files.filter(f => f.name !== fileName);
+    setFiles(newFiles);
+    if (activeFile?.name === fileName) {
+      setActiveFile(newFiles[0] || null);
+    }
+  };
+
+  const handleAddFile = () => {
+    const name = prompt("Enter file name (e.g., about.html):");
+    if (!name) return;
+    if (files.find(f => f.name === name)) {
+      alert("File already exists.");
+      return;
+    }
+    const ext = name.split('.').pop() || 'text';
+    const newFile: ProjectFile = {
+      name,
+      content: '',
+      language: ext as any
+    };
+    setFiles([...files, newFile]);
+    setActiveFile(newFile);
+  };
+
+  const handleDownloadZip = async () => {
+    const zip = new JSZip();
+    files.forEach(file => {
+      zip.file(file.name, file.content);
     });
-  }, []);
-
-  // Update preview automatically on file edits with a small debounce
-  useEffect(() => {
-    const timer = setTimeout(() => {
-        setRefreshTrigger(prev => prev + 1);
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, [projectState.files]);
-
-  const activeFileData = projectState.files.find(f => f.name === projectState.activeFile);
+    
+    try {
+      const content = await zip.generateAsync({ type: 'blob' });
+      saveAs(content, 'nebula-project.zip');
+    } catch (error) {
+      console.error("Error creating zip:", error);
+      alert("Could not download zip.");
+    }
+  };
 
   return (
-    <div className="flex flex-col h-screen bg-[#121212] text-white font-sans overflow-hidden">
-      
-      <Header 
-        projectName={projectState.projectName}
-        onProjectNameChange={(name) => setProjectState(prev => ({ ...prev, projectName: name }))}
-        onDownload={() => downloadProjectAsZip(projectState.files, projectState.projectName)}
-        viewMode={viewMode}
-        setViewMode={setViewMode}
-      />
+    <div className="flex flex-col h-screen w-screen bg-[#111]">
+      {/* Header */}
+      <header className="h-14 bg-gray-900 border-b border-gray-700 flex items-center justify-between px-4 shrink-0 z-10">
+        <div className="flex items-center space-x-3">
+            <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-600/20">
+                <i className="fas fa-meteor text-white text-sm"></i>
+            </div>
+            <h1 className="font-bold text-lg text-gray-100 tracking-tight">Nebula<span className="text-indigo-500">Builder</span></h1>
+        </div>
 
-      {/* Main Layout */}
-      <div className="flex-1 flex overflow-hidden">
-        
+        <div className="flex items-center bg-gray-800 rounded-lg p-1 border border-gray-700">
+            <button 
+                onClick={() => setViewMode(ViewMode.EDITOR)}
+                className={`px-3 py-1 rounded text-sm transition-all ${viewMode === ViewMode.EDITOR ? 'bg-gray-700 text-white shadow' : 'text-gray-400 hover:text-white'}`}
+            >
+                <i className="fas fa-code mr-2"></i>Code
+            </button>
+            <button 
+                onClick={() => setViewMode(ViewMode.SPLIT)}
+                className={`px-3 py-1 rounded text-sm transition-all ${viewMode === ViewMode.SPLIT ? 'bg-gray-700 text-white shadow' : 'text-gray-400 hover:text-white'} hidden md:block`}
+            >
+                <i className="fas fa-columns mr-2"></i>Split
+            </button>
+            <button 
+                onClick={() => setViewMode(ViewMode.PREVIEW)}
+                className={`px-3 py-1 rounded text-sm transition-all ${viewMode === ViewMode.PREVIEW ? 'bg-gray-700 text-white shadow' : 'text-gray-400 hover:text-white'}`}
+            >
+                <i className="fas fa-desktop mr-2"></i>Preview
+            </button>
+        </div>
+
+        <button 
+            onClick={handleDownloadZip}
+            className="bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-600 px-4 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center"
+        >
+            <i className="fas fa-download mr-2"></i> Export
+        </button>
+      </header>
+
+      {/* Main Content */}
+      <main className="flex-1 flex overflow-hidden relative">
         {/* Sidebar */}
-        <div className="w-80 shrink-0 flex flex-col border-r border-[#333] bg-[#1e1e1e] transition-all">
-            {/* Sidebar Tabs */}
-            <div className="flex border-b border-[#333]">
-                <button 
-                    onClick={() => setActiveSidebarTab('files')}
-                    className={`flex-1 py-3 text-xs font-medium uppercase tracking-wider flex items-center justify-center gap-2 border-b-2 transition-colors ${activeSidebarTab === 'files' ? 'border-purple-500 text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}
-                >
-                    <Files size={14} />
-                    Files
-                </button>
-                <button 
-                    onClick={() => setActiveSidebarTab('chat')}
-                    className={`flex-1 py-3 text-xs font-medium uppercase tracking-wider flex items-center justify-center gap-2 border-b-2 transition-colors ${activeSidebarTab === 'chat' ? 'border-purple-500 text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}
-                >
-                    <MessageSquare size={14} />
-                    AI Chat
-                </button>
-            </div>
+        <FileExplorer 
+          files={files} 
+          activeFile={activeFile} 
+          onSelectFile={setActiveFile}
+          onDeleteFile={handleDeleteFile}
+          onAddFile={handleAddFile}
+        />
 
-            {/* Sidebar Content */}
-            <div className="flex-1 overflow-hidden relative">
-                {activeSidebarTab === 'files' ? (
-                     <FileExplorer 
-                        files={projectState.files} 
-                        activeFile={projectState.activeFile}
-                        onSelectFile={(name) => setProjectState(prev => ({ ...prev, activeFile: name }))}
-                        onDeleteFile={(name) => {
-                             setProjectState(prev => {
-                                 const newFiles = prev.files.filter(f => f.name !== name);
-                                 return {
-                                     ...prev,
-                                     files: newFiles,
-                                     activeFile: prev.activeFile === name ? (newFiles[0]?.name || null) : prev.activeFile
-                                 };
-                             });
-                        }}
-                    />
-                ) : (
-                    <ChatPanel 
-                        messages={messages}
-                        onSendMessage={handleSendMessage}
-                        isGenerating={projectState.isGenerating}
-                        onEnhancePrompt={enhancePrompt}
-                    />
-                )}
-            </div>
+        {/* Workspace */}
+        <div className="flex-1 flex relative bg-[#0d0d0d]">
+           {/* Editor Pane */}
+           <div className={`
+              ${viewMode === ViewMode.EDITOR ? 'w-full' : ''}
+              ${viewMode === ViewMode.SPLIT ? 'w-1/2 border-r border-gray-800' : ''}
+              ${viewMode === ViewMode.PREVIEW ? 'hidden' : ''}
+              h-full flex flex-col
+           `}>
+              <CodeEditor file={activeFile} onUpdateContent={handleUpdateContent} />
+           </div>
+
+           {/* Preview Pane */}
+           <div className={`
+              ${viewMode === ViewMode.PREVIEW ? 'w-full' : ''}
+              ${viewMode === ViewMode.SPLIT ? 'w-1/2' : ''}
+              ${viewMode === ViewMode.EDITOR ? 'hidden' : ''}
+              h-full flex flex-col bg-white
+           `}>
+              <Preview files={files} refreshTrigger={refreshPreview} />
+           </div>
         </div>
 
-        {/* Content Area */}
-        <div className="flex-1 flex flex-col min-w-0 bg-[#1e1e1e]">
-            {/* Editor / Preview Grid */}
-            <div className="flex-1 flex relative">
-                {/* Editor Pane */}
-                <div className={`
-                    ${viewMode === 'editor' ? 'w-full' : ''}
-                    ${viewMode === 'preview' ? 'hidden' : ''}
-                    ${viewMode === 'split' ? 'w-1/2 border-r border-[#333]' : ''}
-                    flex flex-col
-                `}>
-                   <CodeEditor file={activeFileData} onChange={handleFileChange} />
-                </div>
-
-                {/* Preview Pane */}
-                <div className={`
-                    ${viewMode === 'preview' ? 'w-full' : ''}
-                    ${viewMode === 'editor' ? 'hidden' : ''}
-                    ${viewMode === 'split' ? 'w-1/2' : ''}
-                    bg-white
-                `}>
-                    <Preview files={projectState.files} refreshTrigger={refreshTrigger} />
-                </div>
-            </div>
-        </div>
-      </div>
+        {/* Prompt Bar Overlay */}
+        <PromptBar onGenerate={handleGenerate} isGenerating={isGenerating} />
+      </main>
     </div>
   );
 };
